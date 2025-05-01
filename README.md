@@ -14,6 +14,16 @@
 - 双栈支持：同时支持 IPv4 和 IPv6 连接
 - 应急模式：后端不可用时提供自定义 MOTD 和踢出信息
 
+## 实现功能
+ - [x] 支持 TCP
+ - [x] 支持 UDP
+ - [x] 支持 Proxy Protocol (TCP)
+ - [x] 支持 Proxy Protocol (UDP)
+ - [x] 支持连接不上 JE 后端时返回 MOTD 信息
+ - [ ] 支持连接不上 BE 后端时返回 MOTD 信息
+ - [ ] 统一管理面板
+ - [ ] Docker
+
 ## 安装方法
 
 ### 从源码构建
