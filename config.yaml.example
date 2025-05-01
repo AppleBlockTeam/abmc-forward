@@ -1,3 +1,4 @@
+# 同时监听 IPv4 和 IPv6（双栈模式）
 tcp_addr: "[::]:25565"
 udp_addr: "[::]:19132"
 remote_tcp_addr: "127.0.0.1:25566"
@@ -27,7 +28,13 @@ log_connections: true
 fallback_mode: true
 
 # 后端不可用时显示的 MOTD 信息
-fallback_motd: "§c服务器维护中..."
+fallback_motd: "ABMC-Forward 服务器维护中..."
 
 # 当玩家尝试进入不可用服务器时显示的踢出信息
 fallback_kick_message: "§c服务器正在维护，请稍后再试！"
+
+# fallback 使用的 version
+version: "1.20.4"
+
+# fallback 使用的 protocol version
+protocol_version: "765"
