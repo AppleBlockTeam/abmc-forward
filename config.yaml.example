@@ -1,0 +1,33 @@
+tcp_addr: "[::]:25565"
+udp_addr: "[::]:19132"
+remote_tcp_addr: "127.0.0.1:25566"
+remote_udp_addr: "127.0.0.1:19133"
+
+# 使用的协议，可选值: tcp, udp, both
+protocol: "both"
+
+# 是否使用 Proxy Protocol
+use_proxy_proto: true
+
+# Proxy Protocol 版本 (1 或 2)
+proxy_proto_ver: 2
+
+# 连接超时时间，单位为秒（5分钟 = 300秒）
+timeout: 300s
+
+# 缓冲区大小，单位为字节（32KB = 32768字节）
+buffer_size: 32768
+
+# 是否记录连接信息
+log_connections: true
+
+# ====== 后端服务器不可用时的配置 ======
+
+# 是否启用后端不可用模式（当后端服务器连接失败时启用）
+fallback_mode: true
+
+# 后端不可用时显示的 MOTD 信息
+fallback_motd: "§c服务器维护中..."
+
+# 当玩家尝试进入不可用服务器时显示的踢出信息
+fallback_kick_message: "§c服务器正在维护，请稍后再试！"
