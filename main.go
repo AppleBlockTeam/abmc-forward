@@ -21,6 +21,8 @@ func main() {
 	// 解析命令行参数
 	flag.Parse()
 
+	log.Printf("Hi! ABMC-Forward")
+
 	// 解析配置文件的绝对路径
 	absConfigPath, err := filepath.Abs(*configPath)
 	if err != nil {
