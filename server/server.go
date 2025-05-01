@@ -9,12 +9,11 @@ import (
 
 // Server 表示转发服务器
 type Server struct {
-	tcpHandler    *TCPHandler
-	udpHandler    *UDPHandler
-	healthChecker *HealthChecker
-	config        config.Config
-	wg            sync.WaitGroup
-	done          chan struct{}
+	tcpHandler *TCPHandler
+	udpHandler *UDPHandler
+	config     config.Config
+	wg         sync.WaitGroup
+	done       chan struct{}
 }
 
 // New 创建新的服务器实例
@@ -24,9 +23,6 @@ func New(cfg config.Config) *Server {
 		config: cfg,
 		done:   done,
 	}
-
-	// 创建健康检查器
-	server.healthChecker = NewHealthChecker(&cfg)
 
 	// 创建TCP处理器
 	if cfg.Protocol == "tcp" || cfg.Protocol == "both" {
@@ -79,9 +75,4 @@ func (s *Server) Stop() {
 	// 等待所有goroutine结束
 	s.wg.Wait()
 	log.Println("转发服务器已停止")
-}
-
-// GetHealthChecker 返回健康检查器
-func (s *Server) GetHealthChecker() *HealthChecker {
-	return s.healthChecker
 }

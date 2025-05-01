@@ -27,6 +27,8 @@ type Config struct {
 	FallbackMode        bool   `yaml:"fallback_mode"`         // 启用后端不可用时的应急模式
 	FallbackMotd        string `yaml:"fallback_motd"`         // 后端不可用时显示的 MOTD
 	FallbackKickMessage string `yaml:"fallback_kick_message"` // 玩家尝试进入时的踢出信息
+	Version             string `yaml:"version"`               // Minecraft 版本号（如 1.20.4）
+	ProtocolVersion     string `yaml:"protocol_version"`      // 协议号（如 765）
 }
 
 // NewDefaultConfig 返回默认配置
@@ -48,6 +50,8 @@ func NewDefaultConfig() Config {
 		FallbackMode:        true,
 		FallbackMotd:        "§c服务器维护中...",
 		FallbackKickMessage: "§c服务器正在维护，请稍后再试！",
+		Version:             "1.20.4",
+		ProtocolVersion:     "765",
 	}
 }
 

@@ -2,6 +2,8 @@ package server
 
 import (
 	"bytes"
+	"encoding/binary"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -95,7 +97,7 @@ func (h *TCPHandler) handleConnections() {
 			if strings.Contains(err.Error(), "use of closed network connection") {
 				return
 			}
-			log.Printf("接受 TCP 连接失败: %v\n", err)
+			log.Printf("[无IP] 接受 TCP 连接失败: %v\n", err)
 			continue
 		}
 
@@ -112,145 +114,21 @@ func (h *TCPHandler) handleConnections() {
 func (h *TCPHandler) handleConnection(clientConn net.Conn) {
 	defer clientConn.Close()
 
-	// 从 Server 获取健康检查器
-	healthChecker := h.getHealthChecker()
+	ip := clientConn.RemoteAddr().String()
 
-	// 如果启用了后端不可用模式，首先检查后端是否可用
-	var backendAvailable bool = true
-	if h.config.FallbackMode && healthChecker != nil {
-		// 现在检查后端状态
-		backendAvailable = healthChecker.CheckTCPBackendAvailable()
-
-		// 如果后端不可用，使用自定义处理
-		if !backendAvailable {
-			if h.config.LogConnections {
-				log.Printf("TCP后端不可用，使用后备模式处理连接: %s\n", clientConn.RemoteAddr())
-			}
-
-			// 读取初始数据包
-			buf := make([]byte, h.config.BufferSize)
-			n, err := clientConn.Read(buf)
-			if err != nil {
-				if !utils.IsConnectionClosed(err) {
-					log.Printf("从客户端读取数据失败: %v\n", err)
-				}
-				return
-			}
-
-			// 尝试解析数据包
-			packet, err := minecraft.ParseJavaPacket(buf[:n])
-			if err != nil {
-				log.Printf("解析Java包失败: %v\n", err)
-				return
-			}
-
-			// 如果是握手包，解析以确定下一状态
-			if packet.IsHandshake() {
-				handshake, err := minecraft.ParseHandshakePacket(packet.Data)
-				if err != nil {
-					log.Printf("解析握手包失败: %v\n", err)
-					return
-				}
-
-				// 如果是状态请求（服务器列表查询）
-				if handshake.NextState == minecraft.StatusState {
-					// 读取下一个数据包 (状态请求)
-					n, err = clientConn.Read(buf)
-					if err != nil {
-						if !utils.IsConnectionClosed(err) {
-							log.Printf("读取状态请求失败: %v\n", err)
-						}
-						return
-					}
-
-					// 验证这是否是一个状态请求包
-					statusPacket, err := minecraft.ParseJavaPacket(buf[:n])
-					if err != nil || statusPacket.PacketID != minecraft.JavaStatusRequest {
-						log.Printf("无效的状态请求包\n")
-						return
-					}
-
-					// 构建自定义状态响应
-					statusData, _ := minecraft.ModifyJavaStatusResponse(
-						[]byte(`{"version":{"name":"1.19.3","protocol":761},"players":{"max":100,"online":0,"sample":[]},"description":{"text":""},"favicon":"","enforcesSecureChat":true}`),
-						h.config.FallbackMotd,
-						100, // 默认最大玩家数
-						0,   // 默认在线玩家数
-					)
-
-					// 构造响应包
-					var responsePacket bytes.Buffer
-					packetLength := 1 + len(statusData) // 1字节的包ID + JSON数据长度
-					responsePacket.Write(minecraft.WriteVarInt(int32(packetLength)))
-					responsePacket.WriteByte(0x00) // 状态响应包ID
-					responsePacket.Write(statusData)
-
-					// 发送响应
-					_, err = clientConn.Write(responsePacket.Bytes())
-					if err != nil {
-						log.Printf("发送状态响应失败: %v\n", err)
-					}
-
-					// 读取可能的ping请求并响应
-					n, err = clientConn.Read(buf)
-					if err != nil {
-						if err != io.EOF && !utils.IsConnectionClosed(err) {
-							log.Printf("读取ping请求失败: %v\n", err)
-						}
-						return
-					}
-
-					pingPacket, err := minecraft.ParseJavaPacket(buf[:n])
-					if err == nil && pingPacket.PacketID == 0x01 {
-						// 这是一个ping请求，发送相同的payload作为响应
-						var pingResponse bytes.Buffer
-						pingResponse.Write(minecraft.WriteVarInt(int32(1 + len(pingPacket.Data)))) // 长度
-						pingResponse.WriteByte(0x01)                                               // Ping响应ID
-						pingResponse.Write(pingPacket.Data)                                        // 时间戳payload
-
-						_, err = clientConn.Write(pingResponse.Bytes())
-						if err != nil {
-							log.Printf("发送ping响应失败: %v\n", err)
-						}
-					}
-				} else if handshake.NextState == minecraft.LoginState {
-					// 这是一个登录请求，发送断开连接消息
-					n, err = clientConn.Read(buf)
-					if err != nil {
-						if !utils.IsConnectionClosed(err) {
-							log.Printf("读取登录请求失败: %v\n", err)
-						}
-						return
-					}
-
-					// 发送登录拒绝数据包
-					kickPacket := minecraft.GenerateLoginDenyPacket(h.config.FallbackKickMessage)
-					_, err = clientConn.Write(kickPacket)
-					if err != nil {
-						log.Printf("发送踢出消息失败: %v\n", err)
-					}
-				}
-
-				return
-			}
-
-			// 如果不是握手包，直接关闭连接
-			return
-		}
-	}
-
-	// 正常处理模式 - 连接到远程服务器
+	// 直接尝试连接远程服务器
 	remoteConn, err := net.DialTimeout("tcp", h.config.RemoteTCPAddr, h.config.Timeout)
 	if err != nil {
-		log.Printf("连接远程服务器失败 %s: %v\n", h.config.RemoteTCPAddr, err)
+		log.Printf("[%s] 连接远程服务器失败 %s: %v\n", ip, h.config.RemoteTCPAddr, err)
 
-		// 如果之前检测结果是可用，但实际连接失败了
-		if backendAvailable && h.config.FallbackMode && healthChecker != nil {
-			// 重新处理这个连接，这次将后端视为不可用
-			backendAvailable = false
-			h.handleConnection(clientConn)
+		// 只有在启用了后备模式时才处理失败情况
+		if h.config.FallbackMode {
+			if h.config.LogConnections {
+				log.Printf("[%s] TCP后端不可用，使用后备模式处理连接\n", ip)
+			}
+
+			h.handleFallbackMode(clientConn)
 		}
-
 		return
 	}
 	defer remoteConn.Close()
@@ -259,13 +137,13 @@ func (h *TCPHandler) handleConnection(clientConn net.Conn) {
 	if h.config.UseProxyProto {
 		err := proxy.WriteProxyProtocolHeader(clientConn.RemoteAddr(), clientConn.LocalAddr(), h.config.ProxyProtoVer, remoteConn)
 		if err != nil {
-			log.Printf("写入 Proxy Protocol 头失败: %v\n", err)
+			log.Printf("[%s] 写入 Proxy Protocol 头失败: %v\n", ip, err)
 			return
 		}
 	}
 
 	if h.config.LogConnections {
-		log.Printf("新的 TCP 连接：%s -> %s\n", clientConn.RemoteAddr(), h.config.RemoteTCPAddr)
+		log.Printf("[%s] 新的 TCP 连接 -> %s\n", ip, h.config.RemoteTCPAddr)
 	}
 
 	// 双向转发数据
@@ -281,7 +159,7 @@ func (h *TCPHandler) handleConnection(clientConn net.Conn) {
 			n, err := clientConn.Read(buf)
 			if err != nil {
 				if !utils.IsConnectionClosed(err) {
-					log.Printf("从客户端读取数据失败: %v\n", err)
+					log.Printf("[%s] 从客户端读取数据失败: %v\n", ip, err)
 				}
 				break
 			}
@@ -290,7 +168,7 @@ func (h *TCPHandler) handleConnection(clientConn net.Conn) {
 			_, err = remoteConn.Write(buf[:n])
 			if err != nil {
 				if !utils.IsConnectionClosed(err) {
-					log.Printf("向远程服务器发送数据失败: %v\n", err)
+					log.Printf("[%s] 向远程服务器发送数据失败: %v\n", ip, err)
 				}
 				break
 			}
@@ -311,7 +189,7 @@ func (h *TCPHandler) handleConnection(clientConn net.Conn) {
 			n, err := remoteConn.Read(buf)
 			if err != nil {
 				if !utils.IsConnectionClosed(err) {
-					log.Printf("从远程服务器读取数据失败: %v\n", err)
+					log.Printf("[%s] 从远程服务器读取数据失败: %v\n", ip, err)
 				}
 				break
 			}
@@ -320,7 +198,7 @@ func (h *TCPHandler) handleConnection(clientConn net.Conn) {
 			_, err = clientConn.Write(buf[:n])
 			if err != nil {
 				if !utils.IsConnectionClosed(err) {
-					log.Printf("向客户端发送数据失败: %v\n", err)
+					log.Printf("[%s] 向客户端发送数据失败: %v\n", ip, err)
 				}
 				break
 			}
@@ -336,28 +214,209 @@ func (h *TCPHandler) handleConnection(clientConn net.Conn) {
 	wg.Wait()
 }
 
-// getHealthChecker 获取健康检查器
-func (h *TCPHandler) getHealthChecker() *HealthChecker {
-	// 获取父服务器
-	if server, ok := getServerFromHandler(h); ok {
-		return server.GetHealthChecker()
+// handleFallbackMode 处理后备模式下的连接，实现完整的服务器列表 ping 协议
+func (h *TCPHandler) handleFallbackMode(clientConn net.Conn) {
+
+	ip := clientConn.RemoteAddr().String()
+
+	// 读取初始数据包
+	buf := make([]byte, h.config.BufferSize)
+	n, err := clientConn.Read(buf)
+	if err != nil {
+		if !utils.IsConnectionClosed(err) {
+			log.Printf("[%s] 从客户端读取数据失败: %v\n", ip, err)
+		}
+		return
 	}
-	return nil
+
+	// 兼容旧版 Server List Ping (0xFE)
+	if n > 0 && buf[0] == 0xFE {
+		motd := h.config.FallbackMotd
+		protocol := h.config.ProtocolVersion
+		if protocol == "" {
+			protocol = "127" // 默认
+		}
+		version := h.config.Version
+		if version == "" {
+			version = "1.19.3"
+		}
+		online := "0"
+		max := "100"
+		resp := fmt.Sprintf("§1\x00%s\x00%s\x00%s\x00%s\x00%s", protocol, version, motd, online, max)
+		utf16 := encodeUTF16BE(resp)
+		var b bytes.Buffer
+		b.WriteByte(0xFF)
+		_ = binary.Write(&b, binary.BigEndian, uint16(len(utf16)))
+		for _, r := range utf16 {
+			_ = binary.Write(&b, binary.BigEndian, r)
+		}
+		clientConn.Write(b.Bytes())
+		return
+	}
+
+	// 尝试解析数据包
+	packet, err := minecraft.ParseJavaPacket(buf[:n])
+	if err != nil {
+		log.Printf("[%s] 解析Java包失败: %v\n", ip, err)
+		return
+	}
+
+	// 如果是握手包，解析以确定下一状态
+	if packet.PacketID == 0x00 {
+		handshake, err := minecraft.ParseHandshakePacket(packet.Data)
+		if err != nil {
+			log.Printf("[%s] 解析握手包失败: %v\n", ip, err)
+			return
+		}
+
+		// 如果是状态请求（服务器列表查询）
+		if handshake.NextState == minecraft.StatusState {
+			// 读取下一个数据包 (状态请求)
+			clientConn.SetReadDeadline(time.Now().Add(3 * time.Second)) // 设置读取超时
+			n, err = clientConn.Read(buf)
+			if err != nil {
+				if !utils.IsConnectionClosed(err) {
+					log.Printf("[%s] 读取状态请求失败: %v\n", ip, err)
+				}
+				return
+			}
+
+			// 验证这是否是一个状态请求包
+			statusPacket, err := minecraft.ParseJavaPacket(buf[:n])
+			if err != nil {
+				log.Printf("[%s] 解析状态请求包失败: %v\n", ip, err)
+				return
+			}
+
+			// 在某些客户端实现中，状态请求可能使用不同的包ID，所以我们宽容一些
+			if statusPacket.PacketID != minecraft.JavaStatusRequest {
+				log.Printf("[%s] 警告: 状态请求包ID异常 (0x%02x)，但将继续处理", ip, statusPacket.PacketID)
+			}
+
+			// 构建自定义状态响应
+			motd := h.config.FallbackMotd
+
+			// 创建默认的响应数据
+			version := h.config.Version
+			if version == "" {
+				version = "1.19.3"
+			}
+			protocol := h.config.ProtocolVersion
+			if protocol == "" {
+				protocol = "761"
+			}
+			defaultData := []byte(fmt.Sprintf(`{"version":{"name":"%s","protocol":%s},"players":{"max":100,"online":0,"sample":[]},"description":{"text":"服务器暂时不可用"},"favicon":"","enforcesSecureChat":true}`, version, protocol))
+
+			statusData, err := minecraft.ModifyJavaStatusResponse(
+				defaultData, // 使用预定义的基础模板
+				motd,
+				100, // 默认最大玩家数
+				0,   // 默认在线玩家数
+			)
+			if err != nil {
+				log.Printf("[%s] 创建状态响应失败: %v", ip, err)
+				return
+			}
+
+			// 构造响应包
+			var responsePacket bytes.Buffer
+
+			// 首先写入 JSON 字符串的长度
+			jsonLenBytes := minecraft.WriteVarInt(int32(len(statusData)))
+
+			// 计算总包长度: JSON长度字段 + JSON数据 + 包ID(1字节)
+			packetLength := len(jsonLenBytes) + len(statusData) + 1
+
+			// 写入总包长度
+			responsePacket.Write(minecraft.WriteVarInt(int32(packetLength)))
+
+			// 写入包ID (状态响应包ID是 0x00)
+			responsePacket.WriteByte(0x00)
+
+			// 写入JSON长度
+			responsePacket.Write(jsonLenBytes)
+
+			// 写入JSON数据
+			responsePacket.Write(statusData)
+
+			// 设置写入超时并发送响应
+			clientConn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+			_, err = clientConn.Write(responsePacket.Bytes())
+			if err != nil {
+				log.Printf("[%s] 发送状态响应失败: %v\n", ip, err)
+				return
+			}
+
+			// 读取可能的ping请求并响应
+			clientConn.SetReadDeadline(time.Now().Add(5 * time.Second)) // 等待ping请求的时间更长些
+			n, err = clientConn.Read(buf)
+			if err != nil {
+				if err != io.EOF && !utils.IsConnectionClosed(err) {
+					log.Printf("[%s] 读取ping请求失败: %v\n", ip, err)
+				}
+				return
+			}
+
+			pingPacket, err := minecraft.ParseJavaPacket(buf[:n])
+			if err == nil && pingPacket.PacketID == 0x01 {
+				// 这是一个ping请求，发送相同的payload作为响应
+				pingResponse := minecraft.GeneratePingResponse(pingPacket.Data)
+
+				clientConn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+				_, err = clientConn.Write(pingResponse)
+				if err != nil {
+					log.Printf("[%s] 发送ping响应失败: %v\n", ip, err)
+				} else {
+					log.Printf("[%s] 成功发送ping响应", ip)
+				}
+			} else {
+				if err != nil {
+					log.Printf("[%s] 解析ping包失败: %v", ip, err)
+				} else {
+					log.Printf("[%s] 收到的包不是ping请求，PacketID: 0x%02x", ip, pingPacket.PacketID)
+				}
+			}
+		} else if handshake.NextState == minecraft.LoginState {
+			// 这是一个登录请求，发送断开连接消息
+			clientConn.SetReadDeadline(time.Now().Add(3 * time.Second))
+			_, err = clientConn.Read(buf)
+			if err != nil {
+				if !utils.IsConnectionClosed(err) {
+					log.Printf("[%s] 读取登录请求失败: %v\n", ip, err)
+				}
+				return
+			}
+
+			// 发送登录拒绝数据包
+			kickPacket := minecraft.GenerateLoginDenyPacket(h.config.FallbackKickMessage)
+
+			clientConn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+			sentBytes, err := clientConn.Write(kickPacket)
+			if err != nil {
+				log.Printf("[%s] 发送踢出消息失败: %v\n", ip, err)
+			} else {
+				log.Printf("[%s] 成功发送登录拒绝包，共 %d 字节，原因: \"%s\"", ip, sentBytes, h.config.FallbackKickMessage)
+			}
+		}
+	}
 }
 
-// getServerFromHandler 从处理器获取服务器实例
-func getServerFromHandler(handler interface{}) (*Server, bool) {
-	// 这是一个辅助函数，用于获取TCPHandler或UDPHandler所属的服务器实例
-	// 由于Go没有类似于"parent"的概念，我们需要通过一些方式间接获取
-	// 这里使用了一个全局变量来存储服务器实例
-	// 实际使用时，您可能需要使用更优雅的方式，例如依赖注入
-
-	// serverRegistry 是一个全局服务器注册表
-	// 它应该在 main.go 中初始化并注入到服务器组件中
-	if globalServer != nil {
-		return globalServer, true
+// encodeUTF16BE 将字符串编码为 UTF-16BE []uint16
+func encodeUTF16BE(s string) []uint16 {
+	runes := []rune(s)
+	out := make([]uint16, len(runes))
+	for i, r := range runes {
+		out[i] = uint16(r)
 	}
-	return nil, false
+	return out
+}
+
+// min 返回两个整数中的较小值
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // 全局服务器实例

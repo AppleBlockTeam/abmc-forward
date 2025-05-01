@@ -109,55 +109,6 @@ func (h *UDPHandler) handlePackets() {
 			log.Printf("警告: UDP 数据可能被截断，考虑增加缓冲区大小\n")
 		}
 
-		// 从 Server 获取健康检查器
-		healthChecker := h.getHealthChecker()
-
-		// 如果启用了后端不可用模式，立即检查后端是否可用
-		var backendAvailable bool = true
-		if h.config.FallbackMode && healthChecker != nil {
-			backendAvailable = healthChecker.CheckUDPBackendAvailable()
-
-			// 如果后端不可用，则使用自定义处理
-			if !backendAvailable {
-				// 解析接收到的数据包
-				packet := minecraft.ParseBedrockPacket(buffer[:n])
-				if packet != nil {
-					// 检查数据包类型，为不同类型提供不同的响应
-					switch packet.PacketID {
-					case minecraft.OpenConnectionRequest1, minecraft.OpenConnectionRequest2:
-						// 客户端尝试建立连接，发送断开通知
-						disconnectPacket := minecraft.GenerateDisconnectPacket(h.config.FallbackKickMessage)
-						if _, err = h.conn.WriteTo(disconnectPacket, clientAddr); err != nil {
-							log.Printf("发送断开通知失败: %v\n", err)
-						}
-						if err != nil && h.config.LogConnections {
-							log.Printf("发送基岩版断开连接通知失败: %v\n", err)
-						}
-
-					case 0x01: // Unconnected Ping
-						// 客户端发送状态请求，返回自定义MOTD
-						customPong := minecraft.GenerateCustomPongPacket(
-							h.config.FallbackMotd,
-							100, // 默认最大玩家数
-							0,   // 默认在线玩家数
-						)
-						if _, err = h.conn.WriteTo(customPong, clientAddr); err != nil {
-							log.Printf("发送基岩版自定义状态响应失败: %v\n", err)
-						}
-						if err != nil {
-							log.Printf("发送基岩版自定义状态响应失败: %v\n", err)
-						}
-						if err != nil && h.config.LogConnections {
-							log.Printf("发送基岩版自定义状态响应失败: %v\n", err)
-						} else if h.config.LogConnections {
-							log.Printf("已发送基岩版自定义状态响应到 %s\n", clientAddr)
-						}
-					}
-				}
-				continue
-			}
-		}
-
 		clientAddrStr := clientAddr.String()
 
 		// 查找或创建到远程的连接
@@ -175,38 +126,12 @@ func (h *UDPHandler) handlePackets() {
 
 			remoteConn, err = net.DialUDP("udp", nil, remoteAddr)
 			if err != nil {
-				log.Printf("连接远程服务器失败 %s: %v\n", h.config.RemoteUDPAddr, err)
+				log.Printf("[%s] 连接远程服务器失败: %v\n", h.config.RemoteUDPAddr, err)
 
-				// 如果之前检测结果是可用，但实际连接失败了
-				if backendAvailable && h.config.FallbackMode && healthChecker != nil {
-					// 重试一次，这次将后端视为不可用
-					backendAvailable = false
+				// 如果启用了后备模式，且连接失败，直接处理
+				if h.config.FallbackMode {
 					connMapMutex.Unlock()
-
-					// 解析接收到的数据包
-					packet := minecraft.ParseBedrockPacket(buffer[:n])
-					if packet != nil {
-						// 根据数据包类型提供适当的响应
-						switch packet.PacketID {
-						case minecraft.OpenConnectionRequest1, minecraft.OpenConnectionRequest2:
-							disconnectPacket := minecraft.GenerateDisconnectPacket(h.config.FallbackKickMessage)
-							if _, err = h.conn.WriteTo(disconnectPacket, clientAddr); err != nil {
-								log.Printf("发送断开通知失败: %v\n", err)
-							}
-						case 0x01: // Unconnected Ping
-							customPong := minecraft.GenerateCustomPongPacket(
-								h.config.FallbackMotd,
-								100,
-								0,
-							)
-							if _, err = h.conn.WriteTo(customPong, clientAddr); err != nil {
-								log.Printf("发送基岩版自定义状态响应失败: %v\n", err)
-							}
-							if h.config.LogConnections {
-								log.Printf("已发送基岩版自定义状态响应到 %s\n", clientAddr)
-							}
-						}
-					}
+					h.handleFallbackPacket(buffer[:n], clientAddr)
 					continue
 				}
 
@@ -217,7 +142,7 @@ func (h *UDPHandler) handlePackets() {
 			connMap[clientAddrStr] = remoteConn
 
 			if h.config.LogConnections {
-				log.Printf("新的 UDP 连接：%s -> %s\n", clientAddr, h.config.RemoteUDPAddr)
+				log.Printf("[%s] 新的 UDP 连接 -> [%s]\n", clientAddr, h.config.RemoteUDPAddr)
 			}
 
 			// 启动一个 goroutine 来处理远程服务器返回的响应
@@ -297,11 +222,36 @@ func (h *UDPHandler) handlePackets() {
 	}
 }
 
-// getHealthChecker 获取健康检查器
-func (h *UDPHandler) getHealthChecker() *HealthChecker {
-	// 获取父服务器
-	if server, ok := getServerFromHandler(h); ok {
-		return server.GetHealthChecker()
+// handleFallbackPacket 处理后备模式下的UDP数据包
+func (h *UDPHandler) handleFallbackPacket(data []byte, clientAddr net.Addr) {
+	// 解析接收到的数据包
+	packet := minecraft.ParseBedrockPacket(data)
+	if packet != nil {
+		// 检查数据包类型，为不同类型提供不同的响应
+		switch packet.PacketID {
+		case minecraft.OpenConnectionRequest1, minecraft.OpenConnectionRequest2:
+			// 客户端尝试建立连接，发送断开通知
+			disconnectPacket := minecraft.GenerateDisconnectPacket(h.config.FallbackKickMessage)
+			if _, err := h.conn.WriteTo(disconnectPacket, clientAddr); err != nil {
+				log.Printf("发送断开通知失败: %v\n", err)
+			}
+			if h.config.LogConnections {
+				log.Printf("[%s] 已发送基岩版断开连接通知\n", clientAddr)
+			}
+
+		case 0x01: // Unconnected Ping
+			// 客户端发送状态请求，返回自定义MOTD
+			customPong := minecraft.GenerateCustomPongPacket(
+				h.config.FallbackMotd,
+				100, // 默认最大玩家数
+				0,   // 默认在线玩家数
+			)
+			if _, err := h.conn.WriteTo(customPong, clientAddr); err != nil {
+				log.Printf("发送基岩版自定义状态响应失败: %v\n", err)
+			}
+			if h.config.LogConnections {
+				log.Printf("[%s] 已发送基岩版自定义状态响应\n", clientAddr)
+			}
+		}
 	}
-	return nil
 }
