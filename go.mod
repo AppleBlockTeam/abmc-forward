@@ -1,4 +1,4 @@
-module github.com/AppleBlockTeam/abmc-forward
+module github.com/AppleBlockTeam/abmc-forwarder
 
 go 1.23.2
 

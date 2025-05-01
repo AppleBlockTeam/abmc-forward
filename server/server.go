@@ -4,7 +4,7 @@ import (
 	"log"
 	"sync"
 
-	"github.com/AppleBlockTeam/abmc-forward/config"
+	"github.com/AppleBlockTeam/abmc-forwarder/config"
 )
 
 // Server 表示转发服务器

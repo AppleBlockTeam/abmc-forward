@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/AppleBlockTeam/abmc-forward/config"
-	"github.com/AppleBlockTeam/abmc-forward/server"
+	"github.com/AppleBlockTeam/abmc-forwarder/config"
+	"github.com/AppleBlockTeam/abmc-forwarder/server"
 )
 
 var (
@@ -21,7 +21,7 @@ func main() {
 	// 解析命令行参数
 	flag.Parse()
 
-	log.Printf("Hi! ABMC-Forward")
+	log.Printf("Nya! ABMC-Forwarder")
 
 	// 解析配置文件的绝对路径
 	absConfigPath, err := filepath.Abs(*configPath)

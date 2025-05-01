@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AppleBlockTeam/abmc-forward/config"
-	"github.com/AppleBlockTeam/abmc-forward/minecraft"
-	"github.com/AppleBlockTeam/abmc-forward/proxy"
-	"github.com/AppleBlockTeam/abmc-forward/utils"
+	"github.com/AppleBlockTeam/abmc-forwarder/config"
+	"github.com/AppleBlockTeam/abmc-forwarder/minecraft"
+	"github.com/AppleBlockTeam/abmc-forwarder/proxy"
+	"github.com/AppleBlockTeam/abmc-forwarder/utils"
 )
 
 // UDPHandler 处理UDP连接转发

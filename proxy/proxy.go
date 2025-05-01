@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/AppleBlockTeam/abmc-forward/utils"
+	"github.com/AppleBlockTeam/abmc-forwarder/utils"
 	"github.com/pires/go-proxyproto"
 )
 

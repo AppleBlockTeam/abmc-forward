@@ -1,4 +1,4 @@
-# ABMC-Forward
+# abmc-forwarder
 
 一个为 [AppleBlock](https://appleblock.cn) 服务器开发基于 Golang 开发的高性能流量转发工具，支持 Proxy Protocol 协议，专为 Minecraft 服务器设计，同时支持 Java 版和基岩版。
 
@@ -32,8 +32,8 @@
 2. 克隆仓库并编译
 
 ```bash
-git clone https://github.com/AppleBlockTeam/abmc-forward.git
-cd abmc-forward
+git clone https://github.com/AppleBlockTeam/abmc-forwarder.git
+cd abmc-forwarder
 go build .
 ```
 
@@ -42,7 +42,7 @@ go build .
 1. 创建配置文件
 
 ```bash
-./abmc-forward -create-config
+./abmc-forwarder -create-config
 ```
 
 2. 编辑 `config.yaml` 文件，根据需求修改配置
@@ -50,7 +50,7 @@ go build .
 3. 运行转发器
 
 ```bash
-./abmc-forward
+./abmc-forwarder
 ```
 
 ## 配置说明
@@ -103,12 +103,12 @@ fallback_kick_message: "§c服务器正在维护，请稍后再试！"
 
 ### 反向代理
 
-在前端放置 abmc-forward 代理，将流量转发到后端真实服务器：
+在前端放置 abmc-forwarder 代理，将流量转发到后端真实服务器：
 
 ```
-玩家 → abmc-forward → Minecraft 服务器
+玩家 → abmc-forwarder → Minecraft 服务器
 ```
 
 ## 许可证
 
-ABMC-Forward 采用 MIT 许可证。详见 [LICENSE](LICENSE) 文件。
+abmc-forwarder 采用 MIT 许可证。详见 [LICENSE](LICENSE) 文件。
