@@ -9,6 +9,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// PlayerConfig 定义玩家相关配置
+type PlayerConfig struct {
+	Max    int `yaml:"max"`    // 最大玩家数
+	Online int `yaml:"online"` // 在线玩家数
+}
+
 // Config 定义转发器配置
 type Config struct {
 	TCPAddr              string        `yaml:"tcp_addr"`                // TCP本地监听地址
@@ -24,11 +30,12 @@ type Config struct {
 	LogConnections       bool          `yaml:"log_connections"`         // 是否记录连接信息
 
 	// 后端服务器不可用时的 MOTD 配置
-	FallbackMode        bool   `yaml:"fallback_mode"`         // 启用后端不可用时的应急模式
-	FallbackMotd        string `yaml:"fallback_motd"`         // 后端不可用时显示的 MOTD
-	FallbackKickMessage string `yaml:"fallback_kick_message"` // 玩家尝试进入时的踢出信息
-	Version             string `yaml:"version"`               // Minecraft 版本号（如 1.20.4）
-	ProtocolVersion     string `yaml:"protocol_version"`      // 协议号（如 765）
+	FallbackMode        bool         `yaml:"fallback_mode"`         // 启用后端不可用时的应急模式
+	FallbackMotd        string       `yaml:"fallback_motd"`         // 后端不可用时显示的 MOTD
+	FallbackKickMessage string       `yaml:"fallback_kick_message"` // 玩家尝试进入时的踢出信息
+	Version             string       `yaml:"version"`               // Minecraft 版本号（如 1.20.4）
+	ProtocolVersion     string       `yaml:"protocol_version"`      // 协议号（如 765）
+	Players             PlayerConfig `yaml:"players"`               // 玩家数量配置
 }
 
 // NewDefaultConfig 返回默认配置
@@ -48,10 +55,14 @@ func NewDefaultConfig() Config {
 
 		// 后端不可用时的默认配置
 		FallbackMode:        true,
-		FallbackMotd:        "§c服务器维护中...",
+		FallbackMotd:        "§cABMC-Forwarder 服务器维护中...",
 		FallbackKickMessage: "§c服务器正在维护，请稍后再试！",
 		Version:             "1.20.4",
 		ProtocolVersion:     "765",
+		Players: PlayerConfig{
+			Max:    100,
+			Online: 0,
+		},
 	}
 }
 

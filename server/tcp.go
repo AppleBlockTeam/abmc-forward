@@ -240,8 +240,8 @@ func (h *TCPHandler) handleFallbackMode(clientConn net.Conn) {
 		if version == "" {
 			version = "1.19.3"
 		}
-		online := "0"
-		max := "100"
+		online := fmt.Sprintf("%d", h.config.Players.Online)
+		max := fmt.Sprintf("%d", h.config.Players.Max)
 		resp := fmt.Sprintf("§1\x00%s\x00%s\x00%s\x00%s\x00%s", protocol, version, motd, online, max)
 		utf16 := encodeUTF16BE(resp)
 		var b bytes.Buffer
@@ -305,13 +305,14 @@ func (h *TCPHandler) handleFallbackMode(clientConn net.Conn) {
 			if protocol == "" {
 				protocol = "761"
 			}
-			defaultData := []byte(fmt.Sprintf(`{"version":{"name":"%s","protocol":%s},"players":{"max":100,"online":0,"sample":[]},"description":{"text":"服务器暂时不可用"},"favicon":"","enforcesSecureChat":true}`, version, protocol))
+			defaultData := []byte(fmt.Sprintf(`{"version":{"name":"%s","protocol":%s},"players":{"max":100,"online":0,"sample":[{"name":"Powered by Golang","id":"f8c9d733-3bf4-4d86-a19a-8373aaf7cb9f"},{"name":"https://github.com/AppleBlockTeam/abmc-forwarder","id":"32bcc36c-60d9-40c7-8fc1-9a4c08ee4f0b"}]},"description":{"text":"ABMC-Forwarder 服务器暂时不可用"},"favicon":"","enforcesSecureChat":true}`, version, protocol))
 
+			// 使用配置文件中的玩家数量设置
 			statusData, err := minecraft.ModifyJavaStatusResponse(
 				defaultData, // 使用预定义的基础模板
 				motd,
-				100, // 默认最大玩家数
-				0,   // 默认在线玩家数
+				h.config.Players.Max,    // 使用配置文件中的最大玩家数
+				h.config.Players.Online, // 使用配置文件中的在线玩家数
 			)
 			if err != nil {
 				log.Printf("[%s] 创建状态响应失败: %v", ip, err)
@@ -391,11 +392,11 @@ func (h *TCPHandler) handleFallbackMode(clientConn net.Conn) {
 			kickPacket := minecraft.GenerateLoginDenyPacket(h.config.FallbackKickMessage)
 
 			clientConn.SetWriteDeadline(time.Now().Add(3 * time.Second))
-			sentBytes, err := clientConn.Write(kickPacket)
+			_, err := clientConn.Write(kickPacket)
 			if err != nil {
 				log.Printf("[%s] 发送踢出消息失败: %v\n", ip, err)
 			} else {
-				log.Printf("[%s] 成功发送登录拒绝包，共 %d 字节，原因: \"%s\"", ip, sentBytes, h.config.FallbackKickMessage)
+				log.Printf("[%s] 成功发送登录拒绝包，原因: \"%s\"", ip, h.config.FallbackKickMessage)
 			}
 		}
 	}

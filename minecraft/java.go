@@ -163,17 +163,15 @@ func ModifyJavaStatusResponse(data []byte, motd string, maxPlayers, onlinePlayer
 		response = createDefaultStatusResponse()
 	}
 
-	// 修改MOTD (支持纯文本、JSON格式或聊天组件格式)
+	// 修改MOTD
 	if motd != "" {
 		response.Description = parseMotd(motd)
 	}
 
-	// 修改最大玩家数
+	// 修改玩家数量信息
 	if maxPlayers > 0 {
 		response.Players.Max = maxPlayers
 	}
-
-	// 修改在线玩家数
 	if onlinePlayers >= 0 {
 		response.Players.Online = onlinePlayers
 	}
@@ -184,25 +182,22 @@ func ModifyJavaStatusResponse(data []byte, motd string, maxPlayers, onlinePlayer
 
 // parseMotd 解析 MOTD 字符串为适当的格式
 func parseMotd(motd string) interface{} {
-	// 首先尝试解析为JSON格式，且必须是聊天组件（有 text 字段）
-	var jsonMotd map[string]interface{}
+	// 如果已经是 JSON 格式，尝试解析
 	if strings.HasPrefix(motd, "{") && strings.HasSuffix(motd, "}") {
-		err := json.Unmarshal([]byte(motd), &jsonMotd)
-		if err == nil {
-			if _, ok := jsonMotd["text"]; ok {
-				return jsonMotd // 是聊天组件格式
-			}
+		var jsonMotd map[string]interface{}
+		if err := json.Unmarshal([]byte(motd), &jsonMotd); err == nil {
+			return jsonMotd // 直接返回解析成功的 JSON 对象
 		}
 	}
-	// 不是JSON聊天组件，自动包成{"text": motd}
-	return map[string]interface{}{"text": motd}
+	// 如果不是有效的 JSON 或者是纯文本，直接包装为标准聊天组件格式
+	return map[string]string{"text": motd}
 }
 
 // createDefaultStatusResponse 创建默认的状态响应
 func createDefaultStatusResponse() JavaStatusResponse {
 	var response JavaStatusResponse
 
-	// 设置版本信息 (使用当前流行的版本作为默认值)
+	// 设置版本信息
 	response.Version.Name = "1.19.3"
 	response.Version.Protocol = 761 // 对应1.19.3的协议版本
 

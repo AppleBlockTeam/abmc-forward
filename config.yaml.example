@@ -28,13 +28,16 @@ log_connections: true
 fallback_mode: true
 
 # 后端不可用时显示的 MOTD 信息
-fallback_motd: "ABMC-Forwarder 服务器维护中..."
+fallback_motd: "§cABMC-Forwarder 服务器维护中..."
 
 # 当玩家尝试进入不可用服务器时显示的踢出信息
 fallback_kick_message: "§c服务器正在维护，请稍后再试！"
 
-# fallback 使用的 version
+# fallback 使用的协议
 version: "1.20.4"
-
-# fallback 使用的 protocol version
 protocol_version: "765"
+
+# fallback 的在线人数和最大人数
+players: 
+  max: 1919810
+  online: 114514
