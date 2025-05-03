@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/AppleBlockTeam/abmc-forwarder/config"
-	"github.com/AppleBlockTeam/abmc-forwarder/minecraft"
 	"github.com/AppleBlockTeam/abmc-forwarder/proxy"
 	"github.com/AppleBlockTeam/abmc-forwarder/utils"
 )
@@ -127,14 +126,6 @@ func (h *UDPHandler) handlePackets() {
 			remoteConn, err = net.DialUDP("udp", nil, remoteAddr)
 			if err != nil {
 				log.Printf("[%s] 连接远程服务器失败: %v\n", h.config.RemoteUDPAddr, err)
-
-				// 如果启用了后备模式，且连接失败，直接处理
-				if h.config.FallbackMode {
-					connMapMutex.Unlock()
-					h.handleFallbackPacket(buffer[:n], clientAddr)
-					continue
-				}
-
 				connMapMutex.Unlock()
 				continue
 			}
@@ -218,40 +209,6 @@ func (h *UDPHandler) handlePackets() {
 		_, err = remoteConn.Write(data)
 		if err != nil && !utils.IsConnectionClosed(err) {
 			log.Printf("转发 UDP 数据到远程服务器失败: %v\n", err)
-		}
-	}
-}
-
-// handleFallbackPacket 处理后备模式下的UDP数据包
-func (h *UDPHandler) handleFallbackPacket(data []byte, clientAddr net.Addr) {
-	// 解析接收到的数据包
-	packet := minecraft.ParseBedrockPacket(data)
-	if packet != nil {
-		// 检查数据包类型，为不同类型提供不同的响应
-		switch packet.PacketID {
-		case minecraft.OpenConnectionRequest1, minecraft.OpenConnectionRequest2:
-			// 客户端尝试建立连接，发送断开通知
-			disconnectPacket := minecraft.GenerateDisconnectPacket(h.config.FallbackKickMessage)
-			if _, err := h.conn.WriteTo(disconnectPacket, clientAddr); err != nil {
-				log.Printf("发送断开通知失败: %v\n", err)
-			}
-			if h.config.LogConnections {
-				log.Printf("[%s] 已发送基岩版断开连接通知\n", clientAddr)
-			}
-
-		case 0x01: // Unconnected Ping
-			// 客户端发送状态请求，返回自定义MOTD
-			customPong := minecraft.GenerateCustomPongPacket(
-				h.config.FallbackMotd,
-				100, // 默认最大玩家数
-				0,   // 默认在线玩家数
-			)
-			if _, err := h.conn.WriteTo(customPong, clientAddr); err != nil {
-				log.Printf("发送基岩版自定义状态响应失败: %v\n", err)
-			}
-			if h.config.LogConnections {
-				log.Printf("[%s] 已发送基岩版自定义状态响应\n", clientAddr)
-			}
 		}
 	}
 }
