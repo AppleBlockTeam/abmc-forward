@@ -5,6 +5,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/AppleBlockTeam/abmc-forwarder/config"
@@ -18,6 +19,30 @@ type UDPHandler struct {
 	conn   net.PacketConn
 	done   chan struct{}
 	wg     *sync.WaitGroup
+}
+
+type udpSession struct {
+	conn       *net.UDPConn
+	lastActive atomic.Int64
+}
+
+func newUDPSession(conn *net.UDPConn) *udpSession {
+	session := &udpSession{conn: conn}
+	session.touch()
+	return session
+}
+
+func (s *udpSession) touch() {
+	s.lastActive.Store(time.Now().UnixNano())
+}
+
+func (s *udpSession) idleFor(now time.Time) time.Duration {
+	lastActive := s.lastActive.Load()
+	if lastActive == 0 {
+		return 0
+	}
+
+	return now.Sub(time.Unix(0, lastActive))
 }
 
 // NewUDPHandler 创建新的UDP处理器
@@ -58,7 +83,7 @@ func (h *UDPHandler) Stop() {
 // handlePackets 处理UDP数据包
 func (h *UDPHandler) handlePackets() {
 	// UDP 连接映射
-	connMap := make(map[string]*net.UDPConn)
+	connMap := make(map[string]*udpSession)
 	var connMapMutex sync.Mutex
 
 	// 读取缓冲区
@@ -70,22 +95,65 @@ func (h *UDPHandler) handlePackets() {
 		useProxyProto = false
 	}
 
+	cleanupInterval := time.Duration(0)
+	if h.config.Timeout > 0 {
+		cleanupInterval = h.config.Timeout
+		if cleanupInterval > time.Minute {
+			cleanupInterval = time.Minute
+		}
+		if cleanupInterval < time.Second {
+			cleanupInterval = time.Second
+		}
+	}
+
+	cleanupIdleSessions := func(now time.Time) {
+		if h.config.Timeout <= 0 {
+			return
+		}
+
+		expiredSessions := make([]*udpSession, 0)
+
+		connMapMutex.Lock()
+		for clientAddrStr, session := range connMap {
+			if session.idleFor(now) < h.config.Timeout {
+				continue
+			}
+
+			delete(connMap, clientAddrStr)
+			expiredSessions = append(expiredSessions, session)
+
+			if h.config.LogConnections {
+				log.Printf("[%s] UDP 会话空闲超时，已关闭\n", clientAddrStr)
+			}
+		}
+		connMapMutex.Unlock()
+
+		for _, session := range expiredSessions {
+			session.conn.Close()
+		}
+	}
+
 	for {
 		select {
 		case <-h.done:
 			// 关闭所有连接
+			sessions := make([]*udpSession, 0)
 			connMapMutex.Lock()
-			for _, conn := range connMap {
-				conn.Close()
+			for _, session := range connMap {
+				sessions = append(sessions, session)
 			}
 			connMapMutex.Unlock()
+
+			for _, session := range sessions {
+				session.conn.Close()
+			}
 			return
 		default:
 		}
 
 		// 设置读取超时
-		if h.config.Timeout > 0 {
-			h.conn.SetReadDeadline(time.Now().Add(h.config.Timeout))
+		if cleanupInterval > 0 {
+			h.conn.SetReadDeadline(time.Now().Add(cleanupInterval))
 		}
 
 		// 读取 UDP 数据包
@@ -94,6 +162,7 @@ func (h *UDPHandler) handlePackets() {
 			// 检查是否是超时错误
 			netErr, ok := err.(net.Error)
 			if ok && netErr.Timeout() {
+				cleanupIdleSessions(time.Now())
 				continue
 			}
 			if strings.Contains(err.Error(), "use of closed network connection") {
@@ -112,7 +181,7 @@ func (h *UDPHandler) handlePackets() {
 
 		// 查找或创建到远程的连接
 		connMapMutex.Lock()
-		remoteConn, exists := connMap[clientAddrStr]
+		session, exists := connMap[clientAddrStr]
 
 		if !exists {
 			var err error
@@ -123,14 +192,15 @@ func (h *UDPHandler) handlePackets() {
 				continue
 			}
 
-			remoteConn, err = net.DialUDP("udp", nil, remoteAddr)
+			remoteConn, err := net.DialUDP("udp", nil, remoteAddr)
 			if err != nil {
 				log.Printf("[%s] 连接远程服务器失败: %v\n", h.config.RemoteUDPAddr, err)
 				connMapMutex.Unlock()
 				continue
 			}
 
-			connMap[clientAddrStr] = remoteConn
+			session = newUDPSession(remoteConn)
+			connMap[clientAddrStr] = session
 
 			if h.config.LogConnections {
 				log.Printf("[%s] 新的 UDP 连接 -> [%s]\n", clientAddr, h.config.RemoteUDPAddr)
@@ -138,26 +208,32 @@ func (h *UDPHandler) handlePackets() {
 
 			// 启动一个 goroutine 来处理远程服务器返回的响应
 			h.wg.Add(1)
-			go func(clientAddr net.Addr, remoteConn *net.UDPConn, clientAddrStr string) {
+			go func(clientAddr net.Addr, session *udpSession, clientAddrStr string) {
 				defer h.wg.Done()
 				defer func() {
 					connMapMutex.Lock()
-					delete(connMap, clientAddrStr)
-					remoteConn.Close()
+					if currentSession, ok := connMap[clientAddrStr]; ok && currentSession == session {
+						delete(connMap, clientAddrStr)
+					}
 					connMapMutex.Unlock()
+
+					session.conn.Close()
 				}()
 
 				responseBuffer := make([]byte, h.config.BufferSize)
 				for {
-					if h.config.Timeout > 0 {
-						remoteConn.SetReadDeadline(time.Now().Add(h.config.Timeout))
+					if cleanupInterval > 0 {
+						session.conn.SetReadDeadline(time.Now().Add(cleanupInterval))
 					}
 
 					// 从远程服务器读取响应
-					n, _, err := remoteConn.ReadFrom(responseBuffer)
+					n, _, err := session.conn.ReadFrom(responseBuffer)
 					if err != nil {
 						netErr, ok := err.(net.Error)
 						if ok && netErr.Timeout() {
+							if h.config.Timeout > 0 && session.idleFor(time.Now()) >= h.config.Timeout {
+								break
+							}
 							continue
 						}
 						if !utils.IsConnectionClosed(err) {
@@ -168,6 +244,7 @@ func (h *UDPHandler) handlePackets() {
 
 					// 获取到响应数据
 					responseData := responseBuffer[:n]
+					session.touch()
 
 					// 将响应数据发送给客户端
 					_, err = h.conn.WriteTo(responseData, clientAddr)
@@ -176,8 +253,11 @@ func (h *UDPHandler) handlePackets() {
 						break
 					}
 				}
-			}(clientAddr, remoteConn, clientAddrStr)
+			}(clientAddr, session, clientAddrStr)
 		}
+
+		session.touch()
+		remoteConn := session.conn
 
 		// 转发数据到远程服务器
 		data := buffer[:n]
@@ -210,5 +290,7 @@ func (h *UDPHandler) handlePackets() {
 		if err != nil && !utils.IsConnectionClosed(err) {
 			log.Printf("转发 UDP 数据到远程服务器失败: %v\n", err)
 		}
+
+		cleanupIdleSessions(time.Now())
 	}
 }
